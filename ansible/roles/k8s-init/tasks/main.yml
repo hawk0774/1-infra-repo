@@ -1,0 +1,102 @@
+---
+- name: Initialize K8S HA cluster (first master local)
+  ansible.builtin.command: >
+    kubeadm init
+    --control-plane-endpoint={{ lb_ip }}:6443
+    --upload-certs
+    --pod-network-cidr=10.244.0.0/16
+    --ignore-preflight-errors=all
+  args:
+    creates: /etc/kubernetes/admin.conf
+
+# 1. СНАЧАЛА создаем директорию
+- name: Create .kube directory for ubuntu user
+  ansible.builtin.file:
+    path: /home/ubuntu/.kube
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+
+# 2. ЗАТЕМ копируем конфиг (дубликат удален)
+- name: Copy kubeconfig to ubuntu user
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /home/ubuntu/.kube/config
+    remote_src: true
+    owner: ubuntu
+    group: ubuntu
+    mode: '0600'
+
+- name: Set KUBECONFIG for ubuntu
+  ansible.builtin.lineinfile:
+    path: /home/ubuntu/.bashrc
+    line: 'export KUBECONFIG=~/.kube/config'
+    create: yes
+    owner: ubuntu
+    group: ubuntu
+
+- name: Fetch kubeconfig to local machine
+  ansible.builtin.fetch:
+    src: /etc/kubernetes/admin.conf
+    dest: ~/.kube/config-diploma
+    flat: true
+
+- name: Create yc-oauth-secret with correct .dockerconfigjson
+  set_fact:
+    dockerconfigjson: |
+      {
+        "auths": {
+          "cr.yandex": {
+            "username": "oauth",
+            "password": "{{ yc_oauth_token }}"
+          }
+        }
+      }
+
+- name: Base64 encode dockerconfigjson
+  set_fact:
+    dockerconfigjson_b64: "{{ dockerconfigjson | b64encode }}"
+
+- name: Apply yc-oauth-secret manifest
+  copy:
+    content: |
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: yc-oauth-secret
+        namespace: "{{ k8s_namespace | default('default') }}"
+      type: kubernetes.io/dockerconfigjson
+      data:
+        .dockerconfigjson: "{{ dockerconfigjson_b64 }}"
+    dest: /tmp/yc-oauth-secret.yaml
+
+- name: Apply yc-oauth-secret to cluster
+  command: kubectl apply --kubeconfig="{{ kubeconfig_path }}" -f /tmp/yc-oauth-secret.yaml
+  no_log: true
+  register: secret_result
+  changed_when: "'configured' in secret_result.stdout or 'created' in secret_result.stdout"
+
+- name: Patch default ServiceAccount with imagePullSecret
+  shell: |
+    kubectl patch serviceaccount default \
+      -p '{"imagePullSecrets": [{"name": "yc-oauth-secret"}]}' \
+      -n "{{ k8s_namespace | default('default') }}" \
+      --kubeconfig="{{ kubeconfig_path }}"
+  register: sa_result
+  changed_when: "'no change' not in sa_result.stdout"
+
+- name: Get join command for other masters/workers
+  ansible.builtin.command: kubeadm token create --print-join-command
+  register: join_command_raw
+  changed_when: false
+
+- name: Get certificate key for masters
+  ansible.builtin.command: kubeadm init phase upload-certs --upload-certs
+  register: cert_key_raw
+  changed_when: false
+
+- name: Set facts for join commands
+  ansible.builtin.set_fact:
+    k8s_join_cmd: "{{ join_command_raw.stdout }} --ignore-preflight-errors=all"
+    k8s_cert_key: "{{ cert_key_raw.stdout_lines[-1] }}"

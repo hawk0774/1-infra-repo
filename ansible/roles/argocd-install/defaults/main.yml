@@ -1,0 +1,2 @@
+kubeconfig_path: "/home/ubuntu/.kube/config"
+argocd_namespace: "argocd"

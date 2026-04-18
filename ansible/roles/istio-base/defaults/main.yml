@@ -1,0 +1,4 @@
+---
+istio_version: "1.29.0"
+istioctl_install_dir: "/home/ubuntu/.istioctl/bin"
+kubeconfig_path: "/home/ubuntu/.kube/config"

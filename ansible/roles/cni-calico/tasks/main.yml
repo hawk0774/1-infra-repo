@@ -1,0 +1,13 @@
+---
+- name: Download Calico manifest
+  ansible.builtin.get_url:
+    url: "https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico.yaml"
+    dest: "/home/ubuntu/calico.yaml"
+    owner: ubuntu
+    mode: '0644'
+
+- name: Deploy Calico
+  become_user: ubuntu
+  ansible.builtin.command: kubectl apply -f /home/ubuntu/calico.yaml
+  environment:
+    KUBECONFIG: /home/ubuntu/.kube/config

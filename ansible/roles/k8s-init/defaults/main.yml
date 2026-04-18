@@ -1,0 +1,4 @@
+file_dir: /home/yastrebov/diplom-devops/1-infra-repo/terraform/main
+kubeconfig_path: "/home/ubuntu/.kube/config"
+k8s_namespace: "default"
+yc_oauth_token: ""

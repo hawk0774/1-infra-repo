@@ -1,0 +1,32 @@
+---
+- name: Step 1. Prepare all nodes (OS, containerd, k8s packages)
+  hosts: all
+  become: yes
+  roles:
+    - prerequisites
+
+- name: Step 2. Initialize First Master & Set up Core
+  hosts: first_master
+  become: yes
+  roles:
+    - k8s-init
+
+- name: Step 3. Join other Master nodes to HA Cluster
+  hosts: masters:!first_masters
+  become: yes
+  roles:
+    - k8s-join
+
+- name: Step 4. Join Worker nodes to Cluster
+  hosts: workers
+  become: yes
+  roles:
+    - k8s-join
+
+- name: Step 5. Install Cluster Addons
+  hosts: first_master
+  become: yes
+  roles:
+    - cni-calico
+    - istio-base
+    - argocd-install

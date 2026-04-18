@@ -1,0 +1,12 @@
+---
+- name: Join other master nodes
+  ansible.builtin.shell: "{{ hostvars[groups['masters'][0]]['k8s_join_cmd'] }} --control-plane --certificate-key {{ hostvars[groups['masters'][0]]['k8s_cert_key'] }}"
+  args:
+    creates: /etc/kubernetes/kubelet.conf
+  when: "'masters' in group_names"
+
+- name: Join worker nodes
+  ansible.builtin.shell: "{{ hostvars[groups['masters'][0]]['k8s_join_cmd'] }}"
+  args:
+    creates: /etc/kubernetes/kubelet.conf
+  when: "'workers' in group_names"

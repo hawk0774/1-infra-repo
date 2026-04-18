@@ -1,0 +1,16 @@
+---
+- name: systemd containerd
+  systemd:
+    name: containerd
+    daemon_reload: yes
+    state: started
+    enabled: yes
+
+- name: restart containerd
+  systemd:
+    name: containerd
+    state: restarted
+
+- name: sysctl k8s
+  shell: sysctl --system
+...

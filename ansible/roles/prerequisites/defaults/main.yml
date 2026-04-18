@@ -1,0 +1,10 @@
+---
+cri_containerd_version: 1.7.24
+cri_runc_version: 1.2.3
+cri_cni_version: 1.9.1
+k8s_version: 1.35
+k8s_packages:
+- kubelet
+- kubeadm
+- kubectl
+...

@@ -1,0 +1,57 @@
+- name: Set istioctl install dir
+  ansible.builtin.set_fact:
+    istioctl_install_dir: /home/ubuntu/.istioctl/bin
+
+- name: Download istioctl script
+  ansible.builtin.get_url:
+    url: https://istio.io/downloadIstioctl
+    dest: /tmp/downloadIstioctl.sh
+    mode: "0755"
+
+- name: Install Gateway API CRDs
+  become_user: ubuntu
+  ansible.builtin.command: >
+    kubectl apply --server-side
+    -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: gateway_api_crds
+  changed_when: "'created' in gateway_api_crds.stdout or 'configured' in gateway_api_crds.stdout"
+
+- name: Install istioctl binary
+  become_user: ubuntu
+  ansible.builtin.shell: |
+    ISTIO_VERSION={{ istio_version }} /tmp/downloadIstioctl.sh
+  args:
+    chdir: /tmp
+    creates: "{{ istioctl_install_dir }}/istioctl"
+
+- name: Run istioctl ambient install
+  become_user: ubuntu
+  ansible.builtin.command: >
+    {{ istioctl_install_dir }}/istioctl install
+    --set profile=ambient
+    --set components.ingressGateways[0].name=istio-ingressgateway
+    --set components.ingressGateways[0].enabled=true
+    --set components.ingressGateways[0].k8s.service.type=NodePort
+    --set components.ingressGateways[0].k8s.service.ports[0].name=http2
+    --set components.ingressGateways[0].k8s.service.ports[0].port=80
+    --set components.ingressGateways[0].k8s.service.ports[0].targetPort=8080
+    --set components.ingressGateways[0].k8s.service.ports[0].nodePort=30080
+    -y
+  environment:
+    PATH: "{{ ansible_env.PATH }}:{{ istioctl_install_dir }}"
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: istioctl_install
+  changed_when: >-
+    'installed' in (istioctl_install.stdout | lower) or
+    'configured' in (istioctl_install.stdout | lower) or
+    'installed' in (istioctl_install.stderr | lower) or
+    'configured' in (istioctl_install.stderr | lower)
+
+- name: Add istioctl to PATH permanently
+  become_user: ubuntu
+  ansible.builtin.lineinfile:
+    path: /home/ubuntu/.bashrc
+    line: 'export PATH="{{ istioctl_install_dir }}:$PATH"'
+    create: true

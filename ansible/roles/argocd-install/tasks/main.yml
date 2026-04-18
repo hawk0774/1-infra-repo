@@ -1,0 +1,179 @@
+#################################################################
+# 1. Установка Helm
+#################################################################
+- name: Download official Helm install script
+  ansible.builtin.get_url:
+    url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+    dest: /tmp/get_helm.sh
+    mode: '0700'
+  register: download_helm
+  until: download_helm is succeeded
+  retries: 5
+  delay: 5
+
+- name: Execute Helm install script
+  ansible.builtin.command: /tmp/get_helm.sh
+  args:
+    creates: /usr/local/bin/helm
+
+- name: Verify Helm installation
+  ansible.builtin.command: helm version --client --short
+  register: helm_version
+  changed_when: false
+
+- name: Show Helm version
+  ansible.builtin.debug:
+    var: helm_version.stdout
+
+#################################################################
+# 2. Установка ArgoCD
+#################################################################
+- name: Add Argo Helm repository
+  become_user: ubuntu
+  ansible.builtin.command: helm repo add argo https://argoproj.github.io/argo-helm
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: add_argo_repo
+  changed_when: "'has been added' in add_argo_repo.stdout"
+
+- name: Update Helm repositories
+  become_user: ubuntu
+  ansible.builtin.command: helm repo update
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  changed_when: false
+
+- name: Create GitOps values file for ArgoCD
+  become_user: ubuntu
+  ansible.builtin.copy:
+    dest: /tmp/argocd-gitops-values.yaml
+    mode: '0644'
+    content: |
+      configs:
+        repositories:
+          diploma-gitops-repo:
+            url: "https://github.com/hawk0774/3-gitops-repo.git"
+            type: git
+
+      server:
+        additionalApplications:
+          - name: istio-routes
+            namespace: {{ argocd_namespace }}
+            project: default
+            source:
+              repoURL: "https://github.com/hawk0774/3-gitops-repo.git"
+              targetRevision: main
+              path: "manifests/istio"
+            destination:
+              server: "https://kubernetes.default.svc"
+              namespace: default
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+
+          - name: monitoring
+            namespace: {{ argocd_namespace }}
+            project: default
+            sources:
+              - chart: kube-prometheus-stack
+                repoURL: https://prometheus-community.github.io/helm-charts
+                targetRevision: 56.6.2
+                helm:
+                  valueFiles:
+                    - $values/manifests/monitoring/custom-values.yaml
+              - repoURL: "https://github.com/hawk0774/3-gitops-repo.git"
+                targetRevision: main
+                ref: values
+            destination:
+              server: "https://kubernetes.default.svc"
+              namespace: monitoring
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+                - CreateNamespace=true
+                - ServerSideApply=true
+
+          - name: test-app
+            namespace: {{ argocd_namespace }}
+            project: default
+            source:
+              repoURL: "https://github.com/hawk0774/3-gitops-repo.git"
+              targetRevision: main
+              path: "manifests/test-app"
+            destination:
+              server: "https://kubernetes.default.svc"
+              namespace: default
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+
+- name: Install ArgoCD via Helm (Subpath & GitOps configured)
+  become_user: ubuntu
+  ansible.builtin.command: >
+    helm upgrade --install argocd argo/argo-cd
+    --namespace {{ argocd_namespace }}
+    --create-namespace
+    -f /tmp/argocd-gitops-values.yaml
+    --set server.extraArgs="{--insecure,--basehref=/argocd/,--rootpath=/argocd}"
+    --wait
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: argocd_install
+  changed_when: "'STATUS: deployed' in argocd_install.stdout"
+
+- name: Show ArgoCD install status
+  ansible.builtin.debug:
+    var: argocd_install.stdout
+
+- name: Create /tmp/argocd-apps 
+  ansible.builtin.file:
+    path: /tmp/argocd-apps
+    state: directory
+    mode: "0755"
+
+- name: Copy ArgoCD Application manifests
+  copy:
+    src: "argocd-apps/{{ item }}.yaml"
+    dest: "/tmp/argocd-apps/{{ item }}.yaml"
+  loop:
+    - istio-routes
+    - monitoring
+    - test-app
+
+- name: Apply ArgoCD Application manifests
+  shell: |
+    kubectl apply -f /tmp/argocd-apps/{{ item }}.yaml \
+      --kubeconfig="{{ kubeconfig_path }}"
+  loop:
+    - istio-routes
+    - monitoring
+    - test-app
+  register: apply_result
+  changed_when: "'configured' in apply_result.stdout or 'created' in apply_result.stdout"
+
+- name: Cleanup temp manifests
+  file:
+    path: /tmp/argocd-apps
+    state: absent
+
+
+#################################################################
+# 3. Вывод первоначального пароля администратора ArgoCD
+#################################################################
+- name: Extract ArgoCD initial admin password
+  become_user: ubuntu
+  ansible.builtin.shell: >
+    kubectl -n {{ argocd_namespace }} get secret argocd-initial-admin-secret
+    -o jsonpath="{.data.password}" | base64 -d
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: argocd_password
+  changed_when: false
+
+- name: Print ArgoCD admin password
+  ansible.builtin.debug:
+    msg: "ArgoCD initial admin password is: {{ argocd_password.stdout }}"
