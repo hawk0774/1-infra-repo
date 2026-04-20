@@ -55,7 +55,7 @@ resource "yandex_vpc_security_group" "k8s_nodes_sg" {
   name       = "k8s-nodes-sg"
   network_id = yandex_vpc_network.k8s_vpc.id
 
-  # Внутрикластерное общение нод (любой с любым внутри группы)
+  # Внутрикластерное общение нод 
   ingress {
     description       = "Allow all traffic between cluster nodes"
     protocol          = "ANY"
