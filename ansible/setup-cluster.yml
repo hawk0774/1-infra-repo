@@ -30,3 +30,9 @@
     - cni-calico
     - istio-base
     - argocd-install
+
+- name: Step 6. Disable anonymus
+  hosts: masters
+  become: yes
+  roles:
+    - anonimus_disable
